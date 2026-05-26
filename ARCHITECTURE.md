@@ -11,10 +11,10 @@ The system consists of two independent bots, a unified manager, and supporting i
 ## System Architecture
 
 ```
-                      ┌──────────────────────┐
-                      │     Bot Manager      │
-                      │  cmd/manager/main.go │
-                      └──────────┬───────────┘
+                   ┌─────────────────────────────────┐
+                   │       Bet-Bot Manager           │
+                   │  cmd/bet-bot-manager/main.go    │
+                   └──────────────┬──────────────────┘
                                  │
                ┌─────────────────┼─────────────────┐
                │                 │                  │
@@ -40,7 +40,7 @@ The system consists of two independent bots, a unified manager, and supporting i
 
 ## Components
 
-### 1. Bot Manager (`cmd/manager/main.go`)
+### 1. Bot Manager (`cmd/bet-bot-manager/main.go`)
 
 The unified entry point that orchestrates all bots from a single process.
 
@@ -73,7 +73,7 @@ manager:
 
 ### 2. Bet-Bot (Hedged Prediction Betting)
 
-**Entry:** `cmd/bot/main.go` (standalone) or `runBetBot()` in manager
+**Entry:** `runBetBot()` inside `cmd/bet-bot-manager/main.go`
 
 **Strategy:** Places opposite bets (UP + DOWN) from two different wallets on the same market. One always wins, generating arbitrage profit from the prediction market's payout structure.
 
@@ -117,7 +117,7 @@ betting:
 
 ### 3. Candle Rush Bot (Batch Candle Color Betting)
 
-**Entry:** `cmd/candle-rush-bot/main.go` (standalone) or `runCandleRushBot()` in manager
+**Entry:** `runCandleRushBot()` inside `cmd/bet-bot-manager/main.go`
 
 **Strategy:** Places GREEN (UP) + RED (DOWN) bets on every combination of assets, intervals, and consecutive candles in a single batch transaction. Uses the owner wallet directly (no sub-wallets).
 
@@ -332,7 +332,7 @@ Runs periodically (default: every 8 hours) when bet-bot is enabled.
    - If wallet lacks gas for USDC transfer, fund gas from owner first
 3. Log summary: wallets swept, amounts recovered, errors
 
-**Standalone:** `cmd/sweep-all/main.go` runs a one-time sweep of all wallets.
+**Standalone:** `cmd/sweep-manager/main.go` runs a one-shot sweep of all sub-wallets back to the owner. Prompts for USDC, MON, or both.
 
 ---
 
@@ -401,37 +401,39 @@ Thread-safe nonce management with mutex serialization prevents duplicate nonces 
 
 ## Running
 
-### Unified Manager (Recommended)
+This repo ships **three binaries**, all with an interactive prompt at startup:
+
+| Binary | Source | Purpose |
+|---|---|---|
+| `bet-bot-manager` | `cmd/bet-bot-manager/main.go` | Daemon orchestrator. Asks which bot(s) to run, then runs the price-arena bot + candle-rush bot + periodic sweep. |
+| `test-bet-bot-manager` | `cmd/test-bet-bot-manager/main.go` | One-shot tester. Asks which flow to validate, then runs Hasura + Hermes + strategy paths end-to-end. No private keys, no DB, no signing. |
+| `sweep-manager` | `cmd/sweep-manager/main.go` | One-shot sweep. Asks whether to sweep USDC, MON, or both. |
+
+### Daemon
 ```bash
-# Run both bots with config
-./bot-manager --config config.yaml
+# Interactive (picks bots at startup)
+./bet-bot-manager
 
-# Dry run (no transactions)
-./bot-manager --config config.yaml --dry-run
-
-# Pre-generate 50 wallets from mnemonic
-./bot-manager --config config.yaml --generate 50
+# Non-interactive (uses config.yaml manager.enabled_bots)
+./bet-bot-manager --non-interactive --generate 50
 ```
 
-### Standalone Bots
+### On-demand utilities
 ```bash
-# Bet-bot only
-./bot --threads 2 --dry-run --hedged
+./sweep-manager               # interactive
+./sweep-manager --tokens both --non-interactive
 
-# Candle Rush bot only
-./candle-rush-bot
+./test-bet-bot-manager        # interactive
+./test-bet-bot-manager --target both --cycles 5 --non-interactive
 ```
 
-### Utilities
-```bash
-./sweep-all    # Sweep all sub-wallet funds to owner
-./dry-run      # Test full flow without transactions
-./create-user  # Create user account
-```
+See [TEST.md](./TEST.md) for the full testing playbook.
 
 ### Docker
 ```bash
-docker-compose up -d
+docker compose up -d                                # daemon
+docker compose run --rm sweep-manager               # one-shot sweep
+docker compose run --rm test-bet-bot-manager        # one-shot test
 ```
 
 Docker Compose runs the manager binary with secrets mounted from `/run/secrets/`.

@@ -1,11 +1,7 @@
 # Binaries
-bet-bot
-bot-manager
-candle-rush-bot
-sweep
-sweep-all
-sweep-bot
-bot
+bet-bot-manager
+sweep-manager
+test-bet-bot-manager
 *.exe
 *.exe~
 *.dll

@@ -17,28 +17,35 @@ A Go-based automated betting bot for prediction markets on Monad.
 
 ## Quick Start
 
+The repo ships **three binaries**, all with interactive prompts:
+
+| Binary | Purpose |
+|---|---|
+| `bet-bot-manager` | Orchestrator. Prompts which bot(s) to run (price arena, candle rush, or both) and then runs them with a periodic sweep job. |
+| `test-bet-bot-manager` | No-tx flow tester. Prompts which bot(s) to validate and exercises Hasura + Hermes + strategy paths end-to-end. No keys, passphrase, or DB needed. |
+| `sweep-manager` | Interactive sweeper. Prompts whether to sweep USDC, MON, or both from sub-wallets back to the owner wallet. |
+
 ```bash
 # 1. Install dependencies
 go mod tidy
 
-# 2. Build all binaries
-go build -o bot ./cmd/bot
-go build -o candle-rush-bot ./cmd/candle-rush-bot
-go build -o bot-manager ./cmd/manager
-go build -o dry-run ./cmd/dry-run
-go build -o sweep-all ./cmd/sweep-all
-go build -o migrate-wallets ./cmd/migrate-wallets
+# 2. Build all three binaries
+go build -o bet-bot-manager ./cmd/bet-bot-manager
+go build -o test-bet-bot-manager ./cmd/test-bet-bot-manager
+go build -o sweep-manager ./cmd/sweep-manager
 
 # 3. Configure environment
 cp .env.example .env
 # Edit .env with your values (DATABASE_URL, OWNER_PRIVATE_KEY, etc.)
 
-# 4. Test the flow (no transactions)
-./dry-run --hedged
+# 4. Validate the flow (no transactions, no keys)
+./test-bet-bot-manager
 
-# 5. Run the bot
-./bot --hedged
+# 5. Run the orchestrator
+./bet-bot-manager
 ```
+
+See [TEST.md](./TEST.md) for the full testing playbook.
 
 ## Prerequisites
 
@@ -52,17 +59,27 @@ cp .env.example .env
 
 ## Commands
 
-### Bot Manager (`./bot-manager`)
+### Bet-Bot Manager (`./bet-bot-manager`)
 
-Unified entry point that runs bet-bot + candle-rush-bot + periodic wallet sweep.
+Orchestrator that runs the price-arena bot, the candle-rush bot, and a periodic sweep. On startup it asks which bots to run; choose your preset and the manager handles the rest.
 
 ```bash
-# Run with defaults (both bots + sweep every 8 hours)
-./bot-manager --config config.yaml
+# Interactive (prompts which bots to run)
+./bet-bot-manager
 
-# Run with custom config
-./bot-manager --config config.yaml
+# Non-interactive (uses config.yaml manager.enabled_bots verbatim)
+./bet-bot-manager --non-interactive
+
+# Generate N deterministic wallets from mnemonic before running
+./bet-bot-manager --generate 100
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `config.yaml` | Path to config file |
+| `--non-interactive` | `false` | Skip the bot-selection prompt (use `manager.enabled_bots`) |
+| `--dry-run` | `false` | Run both bots in simulation mode (no on-chain tx) |
+| `--generate` | `0` | Pre-generate N wallets from the mnemonic before betting |
 
 Configured via `config.yaml` under the `manager:` section:
 ```yaml
@@ -71,198 +88,63 @@ manager:
   sweep_interval_hours: 8
 ```
 
-### Main Bot (`./bot`)
+### Test Bet-Bot Manager (`./test-bet-bot-manager`)
+
+Exercises the full read-side flow of both bots **without sending any transactions**. Asks which bot(s) you want to test, then runs:
+
+- Loads `config.yaml`
+- Hits Hasura (`HASURA_URL`) for live markets and reports coverage for every enabled asset
+- Runs the strategy selection logic against those markets
+- Hits Hermes (`HERMES_URL`) for live prices on the selected bet's price IDs
+- For candle-rush: validates intervals, assets, halt-time math, and round-size sanity
+
+No keystore passphrase, owner key, or `DATABASE_URL` is required.
 
 ```bash
-# Basic run
-./bot
+# Interactive
+./test-bet-bot-manager
 
-# Dry run (no transactions)
-./bot --dry-run
+# Test only the price-arena flow with 5 selection cycles
+./test-bet-bot-manager --target price-arena --cycles 5 --non-interactive
 
-# Hedged betting (recommended)
-./bot --hedged
-
-# Generate wallets and run hedged
-./bot --mnemonic "your phrase" --generate 100 --hedged
-
-# Multi-threaded
-./bot --threads 3 --hedged
-
-# Full example
-./bot --config config.yaml --mnemonic "your phrase" --generate 50 --threads 2 --hedged
+# Test only the candle-rush flow
+./test-bet-bot-manager --target candle-rush --non-interactive
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `config.yaml` | Path to config file |
-| `--dry-run` | `false` | Simulate without transactions |
-| `--mnemonic` | (env) | Mnemonic for wallet generation |
-| `--generate` | `0` | Number of wallets to generate |
-| `--threads` | `1` | Concurrent betting workers |
-| `--hedged` | `false` | Enable hedged betting |
+| `--target` | (prompt) | `both`, `price-arena`, or `candle-rush` |
+| `--cycles` | `1` | Selection cycles per bot |
+| `--non-interactive` | `false` | Skip the target prompt; `--target` becomes required |
 
-### Candle Rush Bot (`./candle-rush-bot`)
+See [TEST.md](./TEST.md) for the full testing playbook.
 
-Bet on candle colors (GREEN = price up, RED = price down) for cryptocurrency assets. Places bets on **all configured assets**, in **all configured timeframes**, for **N consecutive candles** each — all in one go per round. Tracks last bet per interval to never double-bet on the same candle.
+### Sweep Manager (`./sweep-manager`)
 
-```bash
-# Run with defaults (all assets x all intervals x 5 candles)
-./candle-rush-bot --private-key $PRIVATE_KEY
-
-# Load settings from config file
-./candle-rush-bot --private-key $PRIVATE_KEY --config config.yaml
-
-# Custom assets and candle count
-./candle-rush-bot --private-key $PRIVATE_KEY --assets BTC,ETH --candles 3
-
-# Custom intervals (only 5m and 15m)
-./candle-rush-bot --private-key $PRIVATE_KEY --intervals 5m,15m
-
-# Dry run (simulation mode)
-./candle-rush-bot --private-key $PRIVATE_KEY --dry-run
-
-# Custom amount range
-./candle-rush-bot --private-key $PRIVATE_KEY --min-amount 1 --max-amount 5
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config` | `config.yaml` | Path to config file (loads `candle_rush` section) |
-| `--private-key` | (env) | Wallet private key (`PRIVATE_KEY` or `OWNER_PRIVATE_KEY`) |
-| `--assets` | `BTC,ETH,SOL` | Comma-separated list of assets |
-| `--intervals` | `300,900,1800` | Candle intervals (`300`/`5m`, `900`/`15m`, `1800`/`30m`) |
-| `--candles` | `5` | Consecutive candles to bet per interval per asset |
-| `--min-amount` | `2.0` | Minimum bet amount per side (USDC) |
-| `--max-amount` | `10.0` | Maximum bet amount per side (USDC) |
-| `--cooldown-min` | `10` | Min cooldown between interval batches (seconds) |
-| `--cooldown-max` | `30` | Max cooldown between interval batches (seconds) |
-| `--halt-multiplier` | `1.0` | Halt time multiplier between rounds |
-| `--min-halt` | `60` | Min halt time between rounds (seconds) |
-| `--max-halt` | `60` | Max halt time between rounds (seconds) |
-| `--broker` | `1` | Broker ID |
-| `--dry-run` | `false` | Simulation mode (no transactions) |
-| `--rpc-url` | Monad RPC | RPC endpoint |
-| `--chain-id` | `10143` | Chain ID |
-
-**Config Priority**: Flags > Environment Variables > Config File (`candle_rush` section)
-
-#### Candle Rush Betting Strategy
-
-Each round places bets on **every asset x every interval x N consecutive candles**:
-
-| | BTC | ETH | SOL |
-|---|---|---|---|
-| **5m** (5 candles) | GREEN + RED | GREEN + RED | GREEN + RED |
-| **15m** (5 candles) | GREEN + RED | GREEN + RED | GREEN + RED |
-| **30m** (5 candles) | GREEN + RED | GREEN + RED | GREEN + RED |
-
-With defaults: 3 assets x 3 intervals x 5 candles x 2 sides = **90 bets** across 3 batch transactions (one per interval). All values are configurable.
-
-**Duplicate prevention**: The bot tracks the last candle open time per interval. After halt, it always starts from the next fresh candle — never re-bets on a candle from a previous round.
-
-#### Candle Rush Funding Requirements
-
-With default settings (3 assets, 3 intervals, 5 candles):
-- **Per round**: 90 bets
-- **Minimum per round**: `min-amount x 2 x 3 assets x 5 candles x 3 intervals = 2 x 2 x 3 x 5 x 3 = 180 USDC`
-- **Recommended balance**: `500+ USDC` for extended operation
-
-#### Candle Rush Flow
-
-```
-1. For each interval (5m, 15m, 30m):
-   a. Calculate N consecutive candle open times (skipping any already bet on)
-   b. Check USDC balance
-   c. Ensure USDC approval for Diamond contract
-   d. Build batch transaction with all combinations:
-      - For each candle open time:
-        - BTC GREEN + BTC RED
-        - ETH GREEN + ETH RED
-        - SOL GREEN + SOL RED
-   e. Submit single batchPlaceBet transaction
-   f. Wait for confirmation
-   g. Track last candle open time for this interval
-   h. Small cooldown before next interval
-2. Print round stats
-3. Halt between rounds (never re-bets same candle)
-4. Repeat
-```
-
-### Dry Run Test (`./dry-run`)
-
-Test the entire flow without making any transactions or API calls.
+Forwards USDC and/or MON from every sub-wallet in the wallet store back to the owner wallet. On startup it asks which token(s) to sweep.
 
 ```bash
-# Basic test
-./dry-run
+# Interactive
+./sweep-manager
 
-# Test hedged betting flow
-./dry-run --hedged
-
-# Test with more wallets
-./dry-run --wallets 100 --hedged --verbose
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--config` | `config.yaml` | Path to config file |
-| `--wallets` | `5` | Number of wallets to simulate |
-| `--hedged` | `false` | Show hedged betting flow |
-| `--verbose` | `false` | Show detailed output |
-| `--mnemonic` | (env) | Test mnemonic phrase |
-
-### Sweep All (`./sweep-all`)
-
-Recover USDC and MON from all wallets back to owner.
-
-```bash
-# Preview what would be swept
-./sweep-all --dry-run
-
-# Sweep both USDC and MON
-./sweep-all
+# Sweep both USDC and MON, no prompt (good for cron)
+./sweep-manager --tokens both --non-interactive
 
 # Sweep only USDC
-./sweep-all --mon=false
+./sweep-manager --tokens usdc --non-interactive
 
 # Sweep only MON
-./sweep-all --usdc=false
-
-# Custom thresholds
-./sweep-all --min-usdc 0.1 --min-mon 0.01 --reserve-gas 0.005
+./sweep-manager --tokens mon --non-interactive
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `config.yaml` | Path to config file |
-| `--dry-run` | `false` | Show balances without sweeping |
-| `--usdc` | `true` | Sweep USDC tokens |
-| `--mon` | `true` | Sweep MON native tokens |
-| `--min-usdc` | `0.01` | Minimum USDC to sweep |
-| `--min-mon` | `0.001` | Minimum MON to sweep |
-| `--reserve-gas` | `0.001` | MON to keep for gas |
+| `--tokens` | (prompt) | `both`, `usdc`, or `mon` |
+| `--non-interactive` | `false` | Skip the token prompt; `--tokens` becomes required |
 
-### Migrate Wallets (`./migrate-wallets`)
-
-One-time migration tool to move existing wallets from the legacy `wallets.json` file into PostgreSQL.
-
-```bash
-# Build the migration tool
-go build -o migrate-wallets ./cmd/migrate-wallets
-
-# Migrate using defaults (reads ./data/wallets.json, DATABASE_URL from .env)
-./migrate-wallets
-
-# Specify a different JSON path
-./migrate-wallets --json-path /path/to/wallets.json
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--json-path` | `./data/wallets.json` | Path to existing wallets JSON file |
-
-The database URL is read from `DATABASE_URL` in `.env` (or the environment). If `KEYSTORE_PASSPHRASE` is set, any plaintext private keys in the JSON will be encrypted during migration. Existing wallets in the database are skipped (`ON CONFLICT DO NOTHING`).
+The sweeper requires `KEYSTORE_PASSPHRASE` and `OWNER_PRIVATE_KEY` (loaded the same way as the orchestrator). For USDC sweeps it tops a sub-wallet up with the gas it needs from the owner wallet before transferring.
 
 ## How It Works
 
@@ -444,55 +326,43 @@ assets:
 ```
 bet-bot/
 ├── cmd/
-│   ├── bot/main.go              # Main betting bot
-│   ├── candle-rush-bot/main.go  # Candle Rush betting bot
-│   ├── manager/main.go          # Unified bot manager
-│   ├── dry-run/main.go          # Flow test (no transactions)
-│   ├── sweep/main.go            # USDC sweep utility
-│   ├── sweep-all/main.go        # USDC + MON sweep utility
-│   ├── migrate-wallets/main.go  # JSON to PostgreSQL migration
-│   └── test-flow/main.go        # E2E test with mocks
+│   ├── bet-bot-manager/main.go       # Interactive orchestrator (price arena + candle rush + sweep)
+│   ├── test-bet-bot-manager/main.go  # No-tx flow tester (asks which bot)
+│   └── sweep-manager/main.go         # Interactive sweep (USDC/MON/both)
 ├── internal/
-│   ├── betting/              # Strategy & executor
-│   ├── bot/                  # Betting cycle engine
-│   ├── candlerush/           # Candle Rush executor
-│   ├── cli/                  # CLI formatting
+│   ├── betting/              # Strategy & executor for price arena
+│   ├── bot/                  # Betting cycle engine (price arena)
+│   ├── candlerush/           # Candle rush executor
+│   ├── cli/                  # CLI formatting + interactive prompts
 │   ├── config/               # Configuration loading
 │   ├── contracts/            # Diamond, ERC20 & CandleRush bindings
 │   ├── markets/              # Hasura market fetcher
-│   ├── prices/               # Pyth price fetcher
+│   ├── notify/               # Slack low-balance alerts
+│   ├── prices/               # Pyth/Hermes price fetcher
 │   ├── referral/             # Referral API client
+│   ├── secret/               # Docker secret / env / interactive prompt loader
 │   ├── utils/                # Name generation
 │   └── wallet/               # Wallet management & encrypted keystore
 ├── config.yaml               # Bot configuration
-├── .env                      # Environment variables
+├── .env                      # Environment variables (see .env.example)
+├── TEST.md                   # Testing playbook
 ├── Dockerfile
 └── docker-compose.yml
 ```
 
 ## Docker
 
-### Using Docker Compose
+The `bet-bot-manager` service runs as a daemon. `sweep-manager` and `test-bet-bot-manager` are exposed under the `tools` profile and are run on demand.
 
 ```bash
-# Build and run (dry-run mode)
-docker-compose up --build
+# Build and run the orchestrator
+docker compose up --build -d
 
-# Run in background (live mode)
-docker-compose up --build -d
-```
+# One-shot interactive sweep
+docker compose run --rm sweep-manager
 
-### Manual Docker
-
-```bash
-# Build
-docker build -t bet-bot .
-
-# Run dry-run
-docker run --env-file .env bet-bot ./bot --dry-run
-
-# Run live
-docker run --env-file .env bet-bot ./bot --hedged
+# Validate flow against live endpoints (no transactions)
+docker compose run --rm test-bet-bot-manager
 ```
 
 ## Contract Addresses (Monad)

@@ -1,7 +1,9 @@
 services:
-  bet-bot:
+  # Primary orchestrator. Runs bet-bot + candle-rush-bot per config.yaml
+  # manager.enabled_bots. Override that selection by editing config.yaml.
+  bet-bot-manager:
     build: .
-    container_name: bet-bot
+    container_name: bet-bot-manager
     env_file:
       - .env
     volumes:
@@ -19,61 +21,46 @@ services:
       - owner_private_key
       - mnemonic
     restart: unless-stopped
-    command: ["./bet-bot", "--hedged"]
+    command: ["./bet-bot-manager", "--non-interactive"]
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  candle-rush-bot:
+  # One-shot interactive sweep:
+  #   docker compose run --rm sweep-manager
+  # For automation pass --tokens both|usdc|mon --non-interactive.
+  sweep-manager:
     build: .
-    container_name: candle-rush-bot
+    profiles: ["tools"]
     env_file:
       - .env
     volumes:
       - ./data:/root/data
       - ./config.yaml:/root/config.yaml
       - ./.env:/root/.env
-    environment:
-      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
-      - LOW_BALANCE_THRESHOLD_USDC=${LOW_BALANCE_THRESHOLD_USDC:-50}
-    secrets:
-      - owner_private_key
-    restart: unless-stopped
-    command: ["./candle-rush-bot"]
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  bot-manager:
-    build: .
-    container_name: bot-manager
-    env_file:
-      - .env
-    volumes:
-      - ./data:/root/data
-      - ./config.yaml:/root/config.yaml
-      - ./.env:/root/.env
-    environment:
-      - SINGLE_WALLET_MODE=${SINGLE_WALLET_MODE:-false}
-      - COOLDOWN_SECONDS=${COOLDOWN_SECONDS:-30}
-      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
-      - LOW_BALANCE_THRESHOLD_USDC=${LOW_BALANCE_THRESHOLD_USDC:-10}
-      - LOW_BALANCE_THRESHOLD_MON=${LOW_BALANCE_THRESHOLD_MON:-1}
     secrets:
       - keystore_passphrase
       - owner_private_key
-      - mnemonic
-    restart: unless-stopped
-    command: ["./bot-manager"]
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    entrypoint: ["./sweep-manager"]
+    stdin_open: true
+    tty: true
+
+  # One-shot test runner: validates Hasura + Hermes + strategy paths without
+  # any blockchain transactions, keys, passphrase, or DB.
+  #   docker compose run --rm test-bet-bot-manager
+  test-bet-bot-manager:
+    build: .
+    profiles: ["tools"]
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/root/config.yaml
+      - ./.env:/root/.env
+    entrypoint: ["./test-bet-bot-manager"]
+    stdin_open: true
+    tty: true
 
 secrets:
   keystore_passphrase:
