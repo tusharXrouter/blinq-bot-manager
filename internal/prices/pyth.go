@@ -168,32 +168,48 @@ func (f *Fetcher) FetchPrices(ctx context.Context, priceIDs []string) (map[strin
 	return result, nil
 }
 
-// ConvertPythPriceTo1e8 converts a Pyth price to 1e8 format (uint64)
-// This is the format expected by the smart contract
+// ConvertPythPriceTo1e8 converts a Pyth price to 1e8 fixed-point (uint64),
+// which is what the prediction-market contracts on Monad expect.
+//
+// Pyth encodes a feed as (price, expo) where the real value = price × 10^expo
+// (see https://docs.pyth.network/price-feeds/best-practices#fixed-point-numeric-representation).
+// For 1e8 fixed-point we want value × 10^8, so:
+//
+//	result = price × 10^(expo + 8) = price × 10^(expo - targetExpo)   targetExpo = -8
+//
+//   - expo > -8 (coarser feed, e.g. commodities at -3/-5, equities at -5):
+//     expoDiff > 0  →  MULTIPLY by 10^expoDiff
+//   - expo < -8 (finer feed):
+//     expoDiff < 0  →  DIVIDE by 10^|expoDiff| (truncates)
+//
+// Crypto feeds (BTC/ETH/SOL) ship at expo=-8 so they pass through unchanged.
+// Prior versions of this function inverted the multiply/divide branches,
+// which produced silently-wrong on-chain `acceptablePrice` values for every
+// non-crypto asset (GOLD, SILVER, WTI, and US equities).
 func ConvertPythPriceTo1e8(priceStr string, expo int) (uint64, error) {
 	price, ok := new(big.Int).SetString(priceStr, 10)
 	if !ok {
 		return 0, fmt.Errorf("invalid price string: %s", priceStr)
 	}
+	if price.Sign() < 0 {
+		return 0, fmt.Errorf("negative price: %s", priceStr)
+	}
 
-	// Target exponent is -8 (1e8 format)
-	targetExpo := -8
+	const targetExpo = -8
 	expoDiff := expo - targetExpo
 
-	if expoDiff > 0 {
-		// Need to divide (price is too large)
-		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(expoDiff)), nil)
-		price = new(big.Int).Div(price, divisor)
-	} else if expoDiff < 0 {
-		// Need to multiply (price is too small)
-		multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-expoDiff)), nil)
-		price = new(big.Int).Mul(price, multiplier)
+	switch {
+	case expoDiff > 0:
+		mul := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(expoDiff)), nil)
+		price.Mul(price, mul)
+	case expoDiff < 0:
+		div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-expoDiff)), nil)
+		price.Div(price, div)
 	}
 
 	if !price.IsUint64() {
 		return 0, fmt.Errorf("price overflow: %s", price.String())
 	}
-
 	return price.Uint64(), nil
 }
 

@@ -94,6 +94,20 @@ A healthy run looks like this (excerpted):
 | `select bet: no valid markets available` | Every market got filtered (closed trading hours / no enabled timeframe matches) | Run during open hours, or expand `betting.enabled_timeframes` |
 | `fetch prices: ... stale` | Hermes gateway is slow or rate-limited | Set `HERMES_URL` to a paid Pyth gateway; default `hermes.pyth.network` rate-limits in CI |
 | `target_covered must be < visible_candles` | `config.yaml` `candle_rush` block is misconfigured | Lower `target_covered` or raise `visible_candles` |
+| 1e8 price looks 10⁵+ off from the actual USD value | A regression of the Pyth expo conversion bug (see `internal/prices/pyth_test.go`) | The runner now prints `raw=… expo=… → 1e8=… ($…)` for every leg. The dollar value in the parentheses must visually match the real market price; if not, `ConvertPythPriceTo1e8` has regressed. |
+
+### Pyth expo sanity check
+
+Crypto majors (BTC, ETH, SOL) ship at `expo=-8`, so their 1e8 representation equals the raw Pyth integer. Commodities (GOLD `-3`, SILVER/WTI `-5`) and US equities ship at coarser scales — the runner prints the converted 1e8 value and dollar equivalent for every leg of every selected bet. After a successful run, eyeball the `$…` column:
+
+```
+WTI vs GOLD vs SILVER HIGHEST @ 5m (0.4953 USDC)
+  id=925ca92ff0… raw=9207145    expo=-5  → 1e8=9187482000     ($91.87)
+  id=765d2ba906… raw=4526854    expo=-3  → 1e8=452685400000   ($4526.85)
+  id=f2fb02c32b… raw=7635482    expo=-5  → 1e8=7635482000     ($76.35)
+```
+
+If any of those dollar figures is orders of magnitude wrong, the on-chain `acceptablePrice` will be too — the contract will either revert or fill at an absurd price. `internal/prices/pyth_test.go` is the unit-test guard for this.
 
 ## After a green test
 

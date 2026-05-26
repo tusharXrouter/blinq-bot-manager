@@ -1,7 +1,10 @@
-# Binaries
-bet-bot-manager
-sweep-manager
-test-bet-bot-manager
+# Binaries — anchored to repo root so the matching cmd/<name>/ source
+# directories don't get accidentally ignored too. The unanchored form
+# (e.g. `bot-manager`) silently swallowed cmd/bot/, cmd/manager/, etc. on
+# the previous restructure; we don't want a rerun of that.
+/bet-bot-manager
+/sweep-manager
+/test-bet-bot-manager
 *.exe
 *.exe~
 *.dll
