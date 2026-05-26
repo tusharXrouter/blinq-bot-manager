@@ -1,0 +1,205 @@
+# Betting Bot Configuration
+
+# Bot Manager - which bots to run when using ./bot-manager
+manager:
+  enabled_bots:
+    - 'bet-bot'
+    - 'candle-rush-bot'
+  sweep_interval_hours: 8  # Sweep sub-wallet funds back to owner every N hours (0 to disable)
+
+# Owner Wallet (holds the funds) - set via OWNER_PRIVATE_KEY env var
+owner_private_key: '${OWNER_PRIVATE_KEY}'
+
+# Network (Monad)
+rpc_url: 'https://rpc.monad.xyz'
+chain_id: 143
+
+# Contracts
+diamond_address: '0x928dc8afe312df45576b15b08c086c5427fd8207'
+usdc_address: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603'
+
+# Market API - set HASURA_URL env var
+hasura_url: '${HASURA_URL}'
+hermes_url: '${HERMES_URL}'
+
+# Wallet Management
+wallets:
+  db_url: '${DATABASE_URL}'
+  new_wallet_probability: 0.7 # Probability [0.0-1.0] of creating a new wallet instead of reusing an existing one
+  min_fund_amount_usdc: 0.1 # Min USDC to fund wallet (should cover multiple bets)
+  max_fund_amount_usdc: 1.0 # Max USDC to fund wallet
+  min_gas_fund_mon: 0.5 # Min MON to fund for gas (~50+ txns)
+  max_gas_fund_mon: 1.0 # Max MON to fund for gas (~100+ txns)
+  min_gas_balance_mon: 0.1 # Refund gas if below this
+  min_wallets_before_reuse: 5
+  single_wallet_mode: false # If true, use owner wallet directly (no wallet creation/funding) - can be overridden by SINGLE_WALLET_MODE env var
+  generate_new_wallets: false # If false, only use existing wallets from store (no on-the-fly creation) - can be overridden by GENERATE_NEW_WALLETS env var
+  mnemonic: '${MNEMONIC}' # Mnemonic for deterministic wallet generation - set MNEMONIC env var
+  initial_wallet_count: 0 # Number of wallets to ensure exist from mnemonic - set INITIAL_WALLET_COUNT env var
+  referral_code: '${REFERRAL_CODE}' # Referral code to redeem - set REFERRAL_CODE env var
+
+# Concurrency
+threads: 1 # Number of concurrent betting threads - set THREADS env var
+api_base_url: '${API_BASE_URL}' # API Base URL
+
+# Betting Constraints (for price arena bot)
+betting:
+  min_amount_usdc: 0.1
+  max_amount_usdc: 1
+  cooldown_seconds: 30
+  tolerance_bps: 100 # 1% price tolerance (aa-betme uses 50 bps / 0.5%)
+  max_price_age_seconds: 30 # Accept prices up to 30 seconds old (reduce retries)
+  price_retries: 1 # Minimal retries to avoid delays
+  broker_id: 1
+  enabled_assets:
+    - 'BTC'
+    - 'ETH'
+    - 'SOL'
+    - 'AAPL'
+    - 'AMZN'
+    - 'TSLA'
+    - 'NVDA'
+    - 'GOOG'
+    - 'META'
+    - 'NFLX'
+    - 'GOLD'
+    - 'SILVER'
+    - 'WTI'
+  enabled_timeframes:
+    - '5m'
+    - '15m'
+    - '30m'
+
+# Candle Rush Bot Configuration
+# Used by: ./candle-rush-bot
+# Strategy: Place GREEN + RED bets on ALL assets × ALL intervals × N candles per round
+candle_rush:
+  # Assets to bet on - each gets GREEN + RED bets per candle
+  # Options: BTC, ETH, SOL (or direct contract addresses)
+  assets:
+    - 'BTC'
+    - 'ETH'
+    - 'SOL'
+
+  # Bet amount range (USDC per side per asset per candle)
+  # Total per round = amount × 2 sides × num_assets × candles × num_intervals
+  # Example: 0.1 USDC × 2 × 3 assets × 5 candles × 3 intervals = 9 USDC per round
+  min_amount_usdc: 0.1
+  max_amount_usdc: 1.0
+
+  # Candle intervals to use (all are bet on every round)
+  # 300 = 5m, 900 = 15m, 1800 = 30m
+  intervals:
+    - 300
+    - 900
+    - 1800
+
+  # Number of consecutive candles to bet on per interval per asset
+  # Each candle gets GREEN + RED bets for every asset
+  # Example: 5 candles on 5m = bets for the next 5 consecutive 5-minute candles
+  candles_per_interval: 5
+
+  # Coverage-based halt time
+  # Each interval halts independently: candlesPerInterval × intervalSeconds × (visible - target) / target
+  # Example: 5 candles × 300s × (14-8)/8 = 1125s ≈ 19 min for 5m interval
+  visible_candles: 14     # Number of candles visible in UI
+  target_covered: 8       # Target candles with volume
+
+  # Cooldown between interval batch transactions within a round (seconds)
+  # Actual cooldown is random between min and max
+  cooldown_min: 10
+  cooldown_max: 30
+
+  # Broker ID for tracking
+  broker_id: 1
+
+# Funding Requirements
+# ===================
+# Main Bot (hedged mode):
+#   - Per round: 2 bets from 2 wallets
+#   - Min per round: min_amount_usdc x 2 = 0.1 x 2 = 0.2 USDC
+#   - Recommended: 20+ USDC in owner wallet
+#
+# Candle Rush Bot (default: 3 assets × 3 intervals × 5 candles):
+#   - Per round: 3 assets × 3 intervals × 5 candles × 2 sides = 90 bets
+#   - Min per round: 0.1 × 2 × 3 × 5 × 3 = 9 USDC
+#   - Recommended: 500+ USDC for extended operation
+
+# Asset Configuration
+assets:
+  BTC:
+    address: '0x0555E30da8f98308EdB960aa94C0Db47230d2B9c'
+    price_id: '0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43'
+  ETH:
+    address: '0xEE8c0E9f1BFFb4Eb878d8f15f368A02a35481242'
+    price_id: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace'
+  SOL:
+    address: '0xea17E5a9efEBf1477dB45082d67010E2245217f1'
+    price_id: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d'
+  # US equities — regular NYSE/Nasdaq session (09:30-16:00 ET, Mon-Fri).
+  # Pyth equity feeds go stale outside these hours; gating here avoids wasted
+  # retries on stale-price fetches.
+  AAPL:
+    address: '0x334B59930ff2c88d02334882C5b30c4f667670c3'
+    price_id: '0x49f6b65cb1de6b10eaf75e7c03ca029c306d0357e91b5311b175084a5ad55688'
+    trading_hours: &us_equity_hours
+      timezone: 'America/New_York'
+      sunday: 'closed'
+      monday: '0930-1600'
+      tuesday: '0930-1600'
+      wednesday: '0930-1600'
+      thursday: '0930-1600'
+      friday: '0930-1600'
+      saturday: 'closed'
+  AMZN:
+    address: '0xCaA0BF21A5C3Cf0Da0E3A1d806064132D1c7B461'
+    price_id: '0xb5d0e0fa58a1f8b81498ae670ce93c872d14434b72c364885d4fa1b257cbb07a'
+    trading_hours: *us_equity_hours
+  TSLA:
+    address: '0xdfc585eb4955BB664e541fCC3F4c1A549A62a4cd'
+    price_id: '0x16dad506d7db8da01c87581c87ca897a012a153557d4d578c3b9c9e1bc0632f1'
+    trading_hours: *us_equity_hours
+  NVDA:
+    address: '0xA0d064d2AA22BB6574D81a4bc73f0E0AE1a25490'
+    price_id: '0xb1073854ed24cbc755dc527418f52b7d271f6cc967bbf8d8129112b18860a593'
+    trading_hours: *us_equity_hours
+  GOOG:
+    address: '0x142340bc2683643A365f708E2FEF8F34892e792E'
+    price_id: '0xe65ff435be42630439c96396653a342829e877e2aafaeaf1a10d0ee5fd2cf3f2'
+    trading_hours: *us_equity_hours
+  META:
+    address: '0x363D26850E3BAaF20d1E56b3F0f76d9A1b95Bba7'
+    price_id: '0x78a3e3b8e676a8f73c439f5d749737034b139bbbe899ba5775216fba596607fe'
+    trading_hours: *us_equity_hours
+  NFLX:
+    address: '0xD37a8e02750DF8fCE0932802f3d4Fa839Dcc4289'
+    price_id: '0x8376cfd7ca8bcdf372ced05307b24dced1f15b1afafdeff715664598f15a3dd2'
+    trading_hours: *us_equity_hours
+  # Commodities — CME-style near-24/5 (Sun 18:00 ET to Fri 17:00 ET, daily
+  # 17:00-18:00 ET break). Schedule copied from price-arena dev config.
+  GOLD:
+    address: '0x89d07792fcea5fe3e962a6e3e70552c5719a563f'
+    price_id: '0x765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2'
+    trading_hours: &commodity_hours
+      timezone: 'America/New_York'
+      sunday: '1800-2400'
+      monday: '0000-1700,1800-2400'
+      tuesday: '0000-1700,1800-2400'
+      wednesday: '0000-1700,1800-2400'
+      thursday: '0000-1700,1800-2400'
+      friday: '0000-1700'
+      saturday: 'closed'
+  SILVER:
+    address: '0xef7b0edf525629fad14fbf61fe842881028176ee'
+    price_id: '0xf2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e'
+    trading_hours: *commodity_hours
+  WTI:
+    address: '0x34ea3219bc63843184167e615e0c209e654fece2'
+    price_id: '0x925ca92ff005ae943c158e3563f59698ce7e75c5a8c8dd43303a0a154887b3e6'
+    trading_hours: *commodity_hours
+
+# Price Fetching
+use_streaming: false # Enable streaming for faster price updates
+
+# Logging
+log_level: 'info'
