@@ -33,6 +33,11 @@ func LoadPassphrase() string {
 	return secret.Load("keystore_passphrase", "KEYSTORE_PASSPHRASE", "Enter keystore passphrase")
 }
 
+// LoadPassphraseWithSource is the source-reporting variant of LoadPassphrase.
+func LoadPassphraseWithSource() (string, secret.Source) {
+	return secret.LoadWithSource("keystore_passphrase", "KEYSTORE_PASSPHRASE", "Enter keystore passphrase")
+}
+
 func NewKeystore(passphrase string) *Keystore {
 	if passphrase == "" {
 		return nil

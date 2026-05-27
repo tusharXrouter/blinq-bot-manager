@@ -48,22 +48,25 @@ func main() {
 	fmt.Printf("  Sweep MON:         %s\n", boolFmt(sweepMON))
 	fmt.Println()
 
-	// Secrets
-	passphrase := wallet.LoadPassphrase()
+	// Secrets — each resolved with the same priority:
+	//   docker secret → ENV (from .env via godotenv, or parent shell) → prompt
+	// The status lines below show which source actually populated each
+	// value, so if you have OWNER_PRIVATE_KEY in .env you can confirm at a
+	// glance that no prompt was about to happen for it.
+	passphrase, passSrc := wallet.LoadPassphraseWithSource()
 	if passphrase == "" {
 		fmt.Printf("  %s KEYSTORE_PASSPHRASE is required to decrypt sub-wallet keys.\n", cli.Error("✗"))
 		os.Exit(1)
 	}
 	ks := wallet.NewKeystore(passphrase)
+	fmt.Printf("  Keystore:  passphrase from %s\n", passSrc)
 
-	ownerKey := cfg.OwnerPrivateKey
-	if ownerKey == "" || ownerKey == "0xyourprivatekeyhere" {
-		ownerKey = secret.Load("owner_private_key", "OWNER_PRIVATE_KEY", "Enter owner wallet private key")
-	}
+	ownerKey, ownerSrc := resolveOwnerKey(cfg)
 	if ownerKey == "" {
 		fmt.Printf("  %s OWNER_PRIVATE_KEY is required.\n", cli.Error("✗"))
 		os.Exit(1)
 	}
+	fmt.Printf("  Owner key: loaded from %s\n", ownerSrc)
 
 	ownerWallet, err := wallet.NewWallet(ownerKey, cfg.RPCUrl, cfg.ChainID)
 	if err != nil {
@@ -325,4 +328,14 @@ func isInteractiveTerminal() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// resolveOwnerKey mirrors the helper in bet-bot-manager: prefer the value
+// already expanded from config.yaml + .env, then docker secret / env /
+// prompt. Treats the example-config placeholder as unset.
+func resolveOwnerKey(cfg *config.Config) (string, secret.Source) {
+	if k := cfg.OwnerPrivateKey; k != "" && k != "0xyourprivatekeyhere" {
+		return k, secret.SourceEnv
+	}
+	return secret.LoadWithSource("owner_private_key", "OWNER_PRIVATE_KEY", "Enter owner wallet private key")
 }

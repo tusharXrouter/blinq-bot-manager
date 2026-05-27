@@ -236,18 +236,26 @@ The table is auto-created on first connection. To migrate from the legacy `walle
 
 ### Secrets (runtime prompts)
 
-Sensitive values are **never required** in `.env` or config files. If not found, the bot prompts securely at startup (hidden input). Resolution order:
+Sensitive values can live in `.env` (loaded by godotenv at startup) or in Docker secrets — the bot only prompts when *neither* is set. Resolution order, applied to every secret independently:
 
 1. **Docker secret** — `/run/secrets/<name>` (best for containers)
-2. **Environment variable** — e.g. `OWNER_PRIVATE_KEY` (works everywhere)
+2. **Environment variable** — e.g. `OWNER_PRIVATE_KEY` (loaded from `.env`, works everywhere)
 3. **Interactive prompt** — hidden terminal input at startup (most secure for local)
+
+Every bot prints the resolved source on startup so you can confirm at a glance that no prompt fired for a value you thought you had configured:
+
+```
+Keystore: Enabled (passphrase from env)
+Owner key: loaded from env
+```
+
+If you'd prefer to *only* get prompted for the passphrase, set `OWNER_PRIVATE_KEY` in `.env` (and `MNEMONIC` too if you use `--generate`).
 
 | Secret | Env Var | Docker Secret Name | When Needed |
 |--------|---------|-------------------|-------------|
 | Owner private key | `OWNER_PRIVATE_KEY` | `owner_private_key` | Always (bet-bot, sweep) |
 | Keystore passphrase | `KEYSTORE_PASSPHRASE` | `keystore_passphrase` | Always (bet-bot, sweep) |
 | Mnemonic | `MNEMONIC` | `mnemonic` | Only with `--generate` |
-| Candle Rush key | `PRIVATE_KEY` | `owner_private_key` | candle-rush-bot only |
 | Database URL | `DATABASE_URL` | — | Always |
 
 ### Environment Variables (`.env`)

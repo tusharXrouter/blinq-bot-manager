@@ -12,53 +12,80 @@ import (
 
 const dockerSecretsDir = "/run/secrets/"
 
+// Source describes where a secret value came from. Used by callers to log
+// "loaded from env" / "loaded from docker secret" lines on startup so the
+// operator can see at a glance which inputs they were prompted for vs.
+// which came from .env — and notice when they unexpectedly *were* prompted
+// for a key they thought they had configured.
+type Source string
+
+const (
+	SourceDockerSecret Source = "docker secret"
+	SourceEnv          Source = "env"
+	SourcePrompt       Source = "prompt"
+	SourceMissing      Source = "missing"
+)
+
 // Load resolves a secret value using the following priority:
 //  1. Docker secret file at /run/secrets/<name>
-//  2. Environment variable <envKey>
+//  2. Environment variable <envKey>      ← .env values land here via godotenv
 //  3. Interactive terminal prompt (hidden input)
 //
 // Returns the resolved value. Exits the process if the value is required
 // and cannot be obtained (e.g., non-interactive terminal with no env/secret).
 func Load(name, envKey, promptLabel string) string {
-	// 1. Docker secret (sanitize name to prevent path traversal)
-	safeName := filepath.Base(name)
-	if data, err := os.ReadFile(dockerSecretsDir + safeName); err == nil {
-		if s := strings.TrimSpace(string(data)); s != "" {
-			return s
-		}
-	}
-
-	// 2. Environment variable
-	if v := os.Getenv(envKey); v != "" {
-		return v
-	}
-
-	// 3. Interactive prompt
-	return promptHidden(promptLabel)
+	v, _ := LoadWithSource(name, envKey, promptLabel)
+	return v
 }
 
-// LoadOptional is like Load but returns empty string instead of prompting
-// when the value is not found in Docker secrets or env vars, unless
-// shouldPrompt is true.
-func LoadOptional(name, envKey, promptLabel string, shouldPrompt bool) string {
-	// 1. Docker secret (sanitize name to prevent path traversal)
-	safeName := filepath.Base(name)
-	if data, err := os.ReadFile(dockerSecretsDir + safeName); err == nil {
-		if s := strings.TrimSpace(string(data)); s != "" {
-			return s
-		}
+// LoadWithSource is like Load but also reports whether the value came from
+// a docker secret, an environment variable, or an interactive prompt.
+func LoadWithSource(name, envKey, promptLabel string) (string, Source) {
+	if v, ok := fromDockerSecret(name); ok {
+		return v, SourceDockerSecret
 	}
-
-	// 2. Environment variable
 	if v := os.Getenv(envKey); v != "" {
-		return v
+		return v, SourceEnv
 	}
+	return promptHidden(promptLabel), SourcePrompt
+}
 
-	// 3. Prompt only if explicitly needed
-	if shouldPrompt {
-		return promptHidden(promptLabel)
+// LoadOptional is like Load but returns ("", SourceMissing) instead of
+// prompting when the value is not found in Docker secrets or env vars,
+// unless shouldPrompt is true.
+func LoadOptional(name, envKey, promptLabel string, shouldPrompt bool) string {
+	v, _ := LoadOptionalWithSource(name, envKey, promptLabel, shouldPrompt)
+	return v
+}
+
+// LoadOptionalWithSource is the source-reporting variant of LoadOptional.
+func LoadOptionalWithSource(name, envKey, promptLabel string, shouldPrompt bool) (string, Source) {
+	if v, ok := fromDockerSecret(name); ok {
+		return v, SourceDockerSecret
 	}
-	return ""
+	if v := os.Getenv(envKey); v != "" {
+		return v, SourceEnv
+	}
+	if shouldPrompt {
+		return promptHidden(promptLabel), SourcePrompt
+	}
+	return "", SourceMissing
+}
+
+// fromDockerSecret reads /run/secrets/<name> if it exists and contains a
+// non-empty value. The name is sanitized via filepath.Base to prevent
+// path traversal via the caller-provided string.
+func fromDockerSecret(name string) (string, bool) {
+	safeName := filepath.Base(name)
+	data, err := os.ReadFile(dockerSecretsDir + safeName)
+	if err != nil {
+		return "", false
+	}
+	s := strings.TrimSpace(string(data))
+	if s == "" {
+		return "", false
+	}
+	return s, true
 }
 
 // promptHidden reads a line from the terminal with masked feedback (* per character).

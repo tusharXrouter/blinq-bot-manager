@@ -98,9 +98,19 @@ func main() {
 	fmt.Println()
 
 	// ── Collect secrets (once) ──────────────────────────────────────────
+	//
+	// Each secret is resolved with the same priority:
+	//   1. /run/secrets/<name>     (docker secrets)
+	//   2. ${ENV_VAR}              (loaded from .env by godotenv above, or
+	//                               from the parent shell)
+	//   3. interactive prompt      (only if neither of the above is set)
+	//
+	// We print the source on the same status line so the operator can
+	// instantly confirm whether they were about to be prompted — if you
+	// have OWNER_PRIVATE_KEY in .env, you should never see a prompt for it.
 
 	// Passphrase (required for bet-bot keystore; still load for manager)
-	passphrase := wallet.LoadPassphrase()
+	passphrase, passSrc := wallet.LoadPassphraseWithSource()
 	if passphrase == "" && enabledBots["bet-bot"] {
 		fmt.Printf("  %s KEYSTORE_PASSPHRASE is required for bet-bot.\n", cli.Error("✗"))
 		os.Exit(1)
@@ -108,18 +118,18 @@ func main() {
 	var ks *wallet.Keystore
 	if passphrase != "" {
 		ks = wallet.NewKeystore(passphrase)
-		fmt.Printf("  Keystore: %s\n", cli.Success("Enabled (keys encrypted at rest)"))
+		fmt.Printf("  Keystore: %s (passphrase from %s)\n", cli.Success("Enabled"), passSrc)
 	}
 
-	// Owner private key
-	ownerKey := cfg.OwnerPrivateKey
-	if ownerKey == "" || ownerKey == "0xyourprivatekeyhere" {
-		ownerKey = secret.Load("owner_private_key", "OWNER_PRIVATE_KEY", "Enter owner wallet private key")
-	}
+	// Owner private key — prefer the value already expanded from
+	// config.yaml + .env so we never re-prompt for something that's
+	// already there.
+	ownerKey, ownerSrc := resolveOwnerKey(cfg)
 	if ownerKey == "" {
 		fmt.Printf("  %s OWNER_PRIVATE_KEY is required.\n", cli.Error("✗"))
 		os.Exit(1)
 	}
+	fmt.Printf("  Owner key: loaded from %s\n", ownerSrc)
 
 	// Resolve generate count: flag > config
 	finalGenerateCount := 0
@@ -129,10 +139,16 @@ func main() {
 		finalGenerateCount = cfg.Wallets.InitialWalletCount
 	}
 
-	// Mnemonic (only if generating wallets)
+	// Mnemonic (only if generating wallets). Same priority as above.
 	finalMnemonic := cfg.Wallets.Mnemonic
-	if finalMnemonic == "" && finalGenerateCount > 0 {
-		finalMnemonic = secret.Load("mnemonic", "MNEMONIC", "Enter mnemonic for wallet generation")
+	var mnemonicSrc secret.Source = secret.SourceMissing
+	if finalMnemonic != "" {
+		mnemonicSrc = secret.SourceEnv
+	} else if finalGenerateCount > 0 {
+		finalMnemonic, mnemonicSrc = secret.LoadWithSource("mnemonic", "MNEMONIC", "Enter mnemonic for wallet generation")
+	}
+	if finalMnemonic != "" {
+		fmt.Printf("  Mnemonic: loaded from %s\n", mnemonicSrc)
 	}
 
 	// ── Initialize owner wallet ─────────────────────────────────────────
@@ -988,4 +1004,20 @@ func isInteractiveTerminal() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// resolveOwnerKey returns the owner wallet private key and the source it
+// came from. Order of preference:
+//   1. cfg.OwnerPrivateKey if already populated (config.yaml after ${ENV}
+//      expansion — this is the .env path users hit when OWNER_PRIVATE_KEY
+//      is uncommented in .env)
+//   2. docker secret / env var / interactive prompt via secret.LoadWithSource
+//
+// The "0xyourprivatekeyhere" sentinel from old example configs is treated
+// as unset to avoid silently running against a placeholder.
+func resolveOwnerKey(cfg *config.Config) (string, secret.Source) {
+	if k := cfg.OwnerPrivateKey; k != "" && k != "0xyourprivatekeyhere" {
+		return k, secret.SourceEnv
+	}
+	return secret.LoadWithSource("owner_private_key", "OWNER_PRIVATE_KEY", "Enter owner wallet private key")
 }
